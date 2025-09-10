@@ -42,7 +42,7 @@ def lambda_handler(event, context):
             
         # Define the new key for the processed file
         # This places the new file in a 'processed' folder with a '.jsonl' extension
-        output_key = f"processed/{os.path.basename(key).split('.')[0]}.jsonl"
+        output_key = f"wistia-pipeline/processed/{os.path.basename(key).split('.')[0]}.jsonl"
         
         # Upload the new content to S3
         s3.put_object(
