@@ -1,3 +1,4 @@
+import logging
 import sys
 from awsglue.transforms import *
 from awsglue.utils import getResolvedOptions
@@ -19,11 +20,14 @@ job.init(args['JOB_NAME'], args)
 
 destination_path = "s3://wistia-video-analytics-de-project/wistia-pipeline/transformed/"
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 # ---------------------------
 # 1 Incremental tables (DynamicFrame + Glue Job Bookmarks)
 # ---------------------------
 def process_incremental_table(db_name, table_name, target_subfolder):
-    print(f"Processing incremental table: {table_name}...")
+    logger.info(f"Processing incremental table: {table_name}...")
     dyf = glueContext.create_dynamic_frame.from_catalog(
         database=db_name,
         table_name=table_name,
@@ -32,7 +36,7 @@ def process_incremental_table(db_name, table_name, target_subfolder):
     
     df = dyf.toDF()
     if df.count() == 0:
-        print(f"No new data for {table_name}. Skipping...")
+        logger.info(f"No new data for {table_name}. Skipping...")
         return
     
     # Flatten nested data if any
@@ -68,17 +72,17 @@ def write_snapshot_table(dyf, target_subfolder, table_name):
         if "root" in relationalized.keys():
             df = relationalized["root"].toDF()
         else:
-            print(f"No 'root' table in {table_name}, using original DF.")
+            logger.info(f"No 'root' table in {table_name}, using original DF.")
     
     # Skip empty DataFrames
     if len(df.columns) == 0 or df.rdd.isEmpty():
-        print(f"No data to write for {table_name}. Skipping...")
+        logger.info(f"No data to write for {table_name}. Skipping...")
         return
     
     snapshot_date = datetime.now().strftime("%Y-%m-%d")
     df = df.withColumn("snapshot_date", lit(snapshot_date))
     
-    print(f"Writing snapshot for {table_name} to S3 (append mode)...")
+    logger.info(f"Writing snapshot for {table_name} to S3 (append mode)...")
     df.write.mode("append").partitionBy("snapshot_date").parquet(destination_path + target_subfolder)
 
 # Snapshot tables
@@ -98,4 +102,4 @@ write_snapshot_table(media_show_dyf, "media_show", "media_show")
 
 # --- Job Completion ---
 job.commit()
-print("Glue job completed successfully.")
+logger.info("Glue job completed successfully.")

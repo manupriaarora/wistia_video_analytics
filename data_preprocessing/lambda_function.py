@@ -1,4 +1,5 @@
 import json
+import logging
 import urllib.parse
 import boto3
 import os
@@ -7,6 +8,11 @@ import os
 s3 = boto3.client('s3')
 RAW_DATA_PREFIX = "wistia-pipeline/raw/"
 PROCESSED_DATA_PREFIX = "wistia-pipeline/processed/"
+
+# --- Configuration and Initialization ---
+# Initialize the logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 def lambda_handler(event, context):
     """
@@ -20,7 +26,7 @@ def lambda_handler(event, context):
         bucket_name = event['Records'][0]['s3']['bucket']['name']
         key = urllib.parse.unquote_plus(event['Records'][0]['s3']['object']['key'], encoding='utf-8')
 
-        print(f"Reading file '{key}' from bucket '{bucket_name}'...")
+        logger.info(f"Reading file '{key}' from bucket '{bucket_name}'...")
 
         # Read the file content from S3
         response = s3.get_object(Bucket=bucket_name, Key=key)
@@ -55,7 +61,7 @@ def lambda_handler(event, context):
             ContentType='application/jsonl'
         )
 
-        print(f"Successfully converted and uploaded to '{output_key}'")
+        logger.info(f"Successfully converted and uploaded to '{output_key}'")
 
         return {
             'statusCode': 200,
@@ -63,7 +69,7 @@ def lambda_handler(event, context):
         }
 
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logger.info(f"An error occurred: {e}")
         return {
             'statusCode': 500,
             'body': json.dumps(f'An error occurred: {e}')
