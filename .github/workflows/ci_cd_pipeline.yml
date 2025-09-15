@@ -65,10 +65,10 @@ jobs:
         run: |
           aws glue update-job \
             --job-name data_transformation_job.py \
-            --job-update "{\"Command\":{\"Name\":\"glueetl\",\"ScriptLocation\":\"s3://${{ secrets.S3_BUCKET_NAME }}/scripts/data_transformation_job.py\"}}"
+            --job-update "{\"Role\":\"${{ secrets.GLUE_SERVICE_ROLE_ARN }}\",\"Command\":{\"Name\":\"glueetl\",\"ScriptLocation\":\"s3://${{ secrets.S3_BUCKET_NAME }}/scripts/data_transformation_job.py\"}}"
 
       - name: Update Glue Data Joining Job
         run: |
           aws glue update-job \
             --job-name data_joining_job.py \
-            --job-update "{\"Command\":{\"Name\":\"glueetl\",\"ScriptLocation\":\"s3://${{ secrets.S3_BUCKET_NAME }}/scripts/data_joining_job.py\"}}"
+            --job-update "{\"Role\":\"${{ secrets.GLUE_SERVICE_ROLE_ARN }}\",\"Command\":{\"Name\":\"glueetl\",\"ScriptLocation\":\"s3://${{ secrets.S3_BUCKET_NAME }}/scripts/data_joining_job.py\"}}"
