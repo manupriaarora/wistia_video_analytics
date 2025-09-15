@@ -15,8 +15,9 @@ s3 = boto3.client('s3')
 
 def process_existing_files():
     """
-    Lists all files in a specific S3 prefix, converts JSON list files to JSON Lines
-    format, and uploads them to a processed prefix.
+    Lists all files in a specific S3 prefix, converts JSON files to JSON Lines
+    format, and uploads them to a processed prefix. This function handles files
+    that contain either a top-level JSON list or a single JSON object.
     """
     print(f"Starting backfill process for bucket: {S3_BUCKET_NAME}")
     paginator = s3.get_paginator('list_objects_v2')
@@ -45,17 +46,22 @@ def process_existing_files():
                 response = s3.get_object(Bucket=S3_BUCKET_NAME, Key=key)
                 file_content = response['Body'].read().decode('utf-8')
                 
-                # Load the JSON content and check if it's a list
+                # Load the JSON content
                 data = json.loads(file_content)
-                if not isinstance(data, list):
-                    print(f"File {key} is not a JSON list. Skipping.")
-                    continue
+
+                # Convert the data to a list for processing, regardless of its original type
+                items_to_process = []
+                if isinstance(data, list):
+                    items_to_process = data
+                else:
+                    items_to_process = [data]
 
                 # Convert the list of JSON objects to JSON Lines
                 json_lines_content = ""
-                for item in data:
+                for item in items_to_process:
                     json_lines_content += json.dumps(item) + '\n'
                 
+                key = os.path.splitext(key)[0]
                 # Define the new key for the processed file
                 output_key = key.replace(RAW_DATA_PREFIX, PROCESSED_DATA_PREFIX) + '.jsonl'
 

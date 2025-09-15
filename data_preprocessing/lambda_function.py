@@ -5,6 +5,8 @@ import os
 
 # Initialize the S3 client
 s3 = boto3.client('s3')
+RAW_DATA_PREFIX = "wistia-pipeline/raw/"
+PROCESSED_DATA_PREFIX = "wistia-pipeline/processed/"
 
 def lambda_handler(event, context):
     """
@@ -27,22 +29,23 @@ def lambda_handler(event, context):
         # Load the JSON content
         data = json.loads(file_content)
 
-        # Ensure the top-level element is a list
-        if not isinstance(data, list):
-            print("Error: The top-level element in the JSON file is not a list. Skipping conversion.")
-            return {
-                'statusCode': 400,
-                'body': json.dumps('File is not a list of objects.')
-            }
+         # Convert the data to a list for processing, regardless of its original type
+        items_to_process = []
+        if isinstance(data, list):
+            items_to_process = data
+        else:
+            items_to_process = [data]
 
         # Convert the list of JSON objects to a JSON Lines string
         json_lines_content = ""
-        for item in data:
+        for item in items_to_process:
             json_lines_content += json.dumps(item) + '\n'
-            
+        
+        key = os.path.splitext(key)[0]
         # Define the new key for the processed file
+        output_key = key.replace(RAW_DATA_PREFIX, PROCESSED_DATA_PREFIX) + '.jsonl'
         # This places the new file in a 'processed' folder with a '.jsonl' extension
-        output_key = f"wistia-pipeline/processed/{os.path.basename(key).split('.')[0]}.jsonl"
+        # output_key = f"wistia-pipeline/processed/{os.path.basename(key).split('.')[0]}.jsonl"
         
         # Upload the new content to S3
         s3.put_object(

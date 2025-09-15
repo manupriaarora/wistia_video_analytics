@@ -16,6 +16,10 @@ S3_LAST_RUN_KEY = "wistia-pipeline/last_run_timestamp.txt"
 # Base Wistia Stats API Endpoint
 BASE_URL = "https://api.wistia.com/v1/stats/medias"
 
+# Define a page limit for full backfills to prevent timeouts.
+# This value may need to be adjusted depending on the volume of your data.
+FULL_LOAD_PAGE_LIMIT = 50
+
 # Initialize the S3 client
 s3_client = boto3.client('s3')
 # Initialize the Secrets Manager client
@@ -129,19 +133,22 @@ def fetch_media_stats(media_id, headers):
         print(f"Error fetching stats for media ID {media_id}: {response.status_code if response else 'No Response'} - {response.text if response else ''}")
         return None
 
-def fetch_incremental_data(media_id, last_run_timestamp, headers, prefix):
+def fetch_incremental_data(url, last_run_timestamp, headers, page_limit=None):
     """
-    Fetches new visitor stats since the last run, handling pagination.
+    Fetches new visitor or event stats since the last run, handling pagination.
     This function demonstrates the core incremental logic.
     """
-    url = f"https://api.wistia.com/v1/stats/{prefix}"
     all_new_data = []
     page = 1
     per_page = 100
 
-    print(f"Starting incremental pull for media ID {media_id} from {last_run_timestamp or 'beginning of time'}.")
+    print(f"Starting incremental pull from {last_run_timestamp or 'beginning of time'}.")
 
     while True:
+        if page_limit and page > page_limit:
+            print(f"--- Reached page limit of {page_limit}. Stopping pull. ---")
+            break
+
         params = {"page": page, "per_page": per_page}
         response = make_api_request(url, headers, params=params)
         
@@ -152,16 +159,14 @@ def fetch_incremental_data(media_id, last_run_timestamp, headers, prefix):
         new_records_on_page = []
         for record in response.json():
             # Wistia timestamps are in UTC, we must parse them correctly
-            if prefix == "visitors":
-                record_timestamp = datetime.fromisoformat(record['created_at'].replace('Z', '+00:00'))
-            else:
-                record_timestamp = datetime.fromisoformat(record['received_at'].replace('Z', '+00:00'))
+            timestamp_key = 'created_at' if 'created_at' in record else 'received_at'
+            record_timestamp = datetime.fromisoformat(record[timestamp_key].replace('Z', '+00:00'))
 
             if last_run_timestamp and record_timestamp <= last_run_timestamp:
                 # We have found a record older than or equal to our last run.
                 # Since records are returned in reverse chronological order by default,
                 # we can stop processing this page and all subsequent pages.
-                print(f"--- Found old record from {record_timestamp}. Stopping pull for this media ID. ---")
+                print(f"--- Found old record from {record_timestamp}. Stopping pull. ---")
                 break
             
             # This is a new record, add it to our list
@@ -179,14 +184,14 @@ def fetch_incremental_data(media_id, last_run_timestamp, headers, prefix):
     
     return all_new_data
 
-def upload_data_to_s3(data, media_id, timestamp, prefix):
+def upload_data_to_s3(data, file_id, timestamp, prefix):
     """Uploads the retrieved data to an S3 bucket as a JSON file."""
     if not data:
-        print(f"No new data to upload for media ID {media_id}.")
+        print(f"No new data to upload for '{file_id}'.")
         return
 
-    # Create a file name based on the media ID and a timestamp
-    file_key = f"wistia-pipeline/raw/{prefix}/{media_id}-{timestamp.strftime('%Y-%m-%d-%H-%M-%S')}.json"
+    # Create a file name based on the file ID and a timestamp
+    file_key = f"wistia-pipeline/raw/{prefix}/{file_id}-{timestamp.strftime('%Y-%m-%d-%H-%M-%S')}.json"
     
     try:
         s3_client.put_object(
@@ -238,11 +243,24 @@ def main():
     # Get the current timestamp to use for the output file name
     current_run_timestamp = datetime.now(timezone.utc)
 
-    # 3. Iterate through each media ID
+    # Determine the page limit for the fetch based on whether it's an incremental or full pull
+    page_limit = FULL_LOAD_PAGE_LIMIT if not last_run_timestamp else None
+
+    # 3. Fetch and upload all new visitor stats
+    print(f"\n--- Processing Global Visitor Stats ---")
+    visitors_url = "https://api.wistia.com/v1/stats/visitors"
+    new_visitor_stats = fetch_incremental_data(visitors_url, last_run_timestamp, headers, page_limit)
+
+    if new_visitor_stats:
+        upload_data_to_s3(new_visitor_stats, "global-visitors", current_run_timestamp, "visitor-stats")
+    else:
+        print("No new visitor data found.")
+
+    # 4. Iterate through each media ID for event stats and media-level stats
     for media_id in MEDIA_IDS:
         print(f"\n--- Processing Media ID: {media_id} ---")
 
-        # Fetch and upload media-level stats
+        # Fetch and upload media-level show data
         media_show = fetch_media_show(media_id, headers)
         if media_show:
             upload_media_stats_to_s3(media_show, media_id, "media-show")
@@ -252,21 +270,11 @@ def main():
         if media_stats:
             upload_media_stats_to_s3(media_stats, media_id)
 
-        # Fetch and upload all new visitor stats since the last run, passing the headers
-        new_visitor_stats = fetch_incremental_data(media_id, last_run_timestamp, headers, "visitors")
-
-        if new_visitor_stats:
-            # 4. Upload the new data to S3
-            upload_data_to_s3(new_visitor_stats, media_id, current_run_timestamp, "visitor-stats")
-        else:
-            print("No new visitor data found.")
-        
-
-        # Fetch and upload all new event stats since the last run, passing the headers
-        new_event_stats = fetch_incremental_data(media_id, last_run_timestamp, headers, "events")
+        # Fetch and upload all new event stats for this specific media ID
+        events_url = f"https://api.wistia.com/v1/stats/events?media_id={media_id}"
+        new_event_stats = fetch_incremental_data(events_url, last_run_timestamp, headers, page_limit)
 
         if new_event_stats:
-            # 4. Upload the new data to S3
             upload_data_to_s3(new_event_stats, media_id, current_run_timestamp, "event-stats")
         else:
             print("No new events data found.")
@@ -284,7 +292,3 @@ def lambda_handler(event, context):
         'statusCode': 200,
         'body': json.dumps('Wistia ingestion process completed successfully!')
     }
-
-if __name__ == "__main__":
-    # Call the main function to start the process
-    main()
